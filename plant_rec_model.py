@@ -13,13 +13,6 @@ def read_excel_data(excel_path):
     df['tanaman_encoded'] = le.fit_transform(df['Nama'])
     return df
 
-# # Fungsi untuk pra-pemrosesan data
-# def preprocess_data(df):
-#     X = df[['Luas', 'Suhu', 'PH', 'Kelembapan', 'Penyinaran']]
-#     y = df['tanaman_encoded']
-#     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-#     return X_train, X_test, y_train, y_test
-
 # Fungsi untuk pra-pemrosesan data
 def preprocess_data(df):
     # Memisahkan fitur (X) dan target (y)
@@ -49,11 +42,11 @@ excel_path = r'C:\Assigment\dataset2.xlsx'
 df_tanaman = read_excel_data(excel_path)
 X_train_scaled, X_test_scaled, y_train, y_test = preprocess_data(df_tanaman)
 
-# Arsitektur model embeddings sederhana
+# Arsitektur model embeddings
 model_tanaman = tf.keras.Sequential([
     tf.keras.layers.InputLayer(input_shape=(5,)),
     tf.keras.layers.Dense(128, activation='relu'),
-    tf.keras.layers.Dropout(0.5),  # Menambah dropout layer untuk mengurangi overfitting
+    tf.keras.layers.Dropout(0.5),
     tf.keras.layers.Dense(64, activation='relu'),
     tf.keras.layers.Dense(len(df_tanaman['Nama'].unique()), activation='softmax')
 ])
