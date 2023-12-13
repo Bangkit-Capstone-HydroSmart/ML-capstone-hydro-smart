@@ -1,10 +1,18 @@
+# plant_rec_model.py
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 import tensorflow as tf
-import matplotlib.pyplot as plt
-from sklearn.metrics.pairwise import linear_kernel
+from sklearn.model_selection import StratifiedKFold
+from imblearn.over_sampling import SMOTE
+
+class MyCallback(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        if logs.get('accuracy') is not None and logs.get('val_accuracy') is not None:
+            if logs['accuracy'] > 0.90 and logs['val_accuracy'] > 0.90:
+                print("\nAkurasi pelatihan > 0.90 dan akurasi validasi > 0.90. Menghentikan pelatihan.")
+                self.model.stop_training = True
 
 # Fungsi untuk membaca data dari file Excel
 def read_excel_data(excel_path):
@@ -14,70 +22,61 @@ def read_excel_data(excel_path):
     return df
 
 # Fungsi untuk pra-pemrosesan data
-def preprocess_data(df):
-    # Memisahkan fitur (X) dan target (y)
+def preprocess_data_with_smote(df):
+    # Memilih fitur-fitur yang digunakan untuk pemrosesan
     X = df[['Luas', 'Suhu', 'PH', 'Kelembapan', 'Penyinaran']]
+    # Memilih variabel target
     y = df['tanaman_encoded']
-    
-    # Pisahkan data menjadi data latih dan data uji
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    # Normalisasi data
+    # Membagi data menjadi data pelatihan dan pengujian
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+    # Normalisasi data menggunakan StandardScaler
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
-    
-    return X_train_scaled, X_test_scaled, y_train, y_test
 
-# Fungsi untuk mendapatkan rekomendasi tanaman
+    # Menerapkan SMOTE pada data pelatihan
+    smote = SMOTE(random_state=42)
+    X_train_resampled, y_train_resampled = smote.fit_resample(X_train_scaled, y_train)
+
+    return X_train_resampled, X_test_scaled, y_train_resampled, y_test
+
+# Fungsi untuk mendapatkan rekomendasi tanaman berdasarkan kesamaan kosinus
 def get_rekomendasi_tanaman(cosine_similarities, df, suhu_pengguna, luas_lahan_pengguna, ph_pengguna, kelembapan_pengguna, penyinaran_pengguna, num_rekomendasi=5):
+    # Mendapatkan indeks tanaman yang serupa berdasarkan urutan kesamaan kosinus
     idx_tanaman_serupa = df.index[cosine_similarities[:, 0].argsort()[-num_rekomendasi:][::-1]]
+    # Mengambil nama tanaman dari dataframe
     rekomendasi = df.loc[idx_tanaman_serupa, 'Nama'].tolist()
+    # Mengembalikan daftar rekomendasi tanaman
     return list(set(rekomendasi))[:num_rekomendasi]
 
 # Ganti path sesuai dengan lokasi file Excel
-excel_path = r'C:\Assigment\dataset2.xlsx'
+excel_path = r'C:\Assigment\dataset4.xlsx'
 
-# Baca dataset dan pra-pemrosesan data
+# Baca dataset dan pra-pemrosesan data dengan SMOTE
 df_tanaman = read_excel_data(excel_path)
-X_train_scaled, X_test_scaled, y_train, y_test = preprocess_data(df_tanaman)
+X_train_resampled, X_test_scaled, y_train_resampled, y_test = preprocess_data_with_smote(df_tanaman)
 
-# Arsitektur model embeddings
+# Arsitektur model
 model_tanaman = tf.keras.Sequential([
     tf.keras.layers.InputLayer(input_shape=(5,)),
     tf.keras.layers.Dense(128, activation='relu'),
     tf.keras.layers.Dropout(0.5),
-    tf.keras.layers.Dense(64, activation='relu'),
+    tf.keras.layers.Dense(32, activation='relu'),
     tf.keras.layers.Dense(len(df_tanaman['Nama'].unique()), activation='softmax')
 ])
 
-# Kompilasi dan latih model dengan early stopping
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
 model_tanaman.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
-history = model_tanaman.fit(X_train_scaled, y_train, epochs=100, validation_data=(X_test_scaled, y_test), callbacks=[early_stopping])
 
-# Hitung kesamaan kosinus
-combined_matrix_tanaman = X_test_scaled
-cosine_similarities_tanaman = linear_kernel(combined_matrix_tanaman, combined_matrix_tanaman)
+# Menerapkan validasi silang
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
-# Contoh penggunaan
-suhu_pengguna = 22.0
-luas_lahan_pengguna = 80.0
-ph_pengguna = 7
-kelembapan_pengguna = 70
-penyinaran_pengguna = 8
+for train_index, test_index in skf.split(X_train_resampled, y_train_resampled):
+    X_train, X_test = X_train_resampled[train_index], X_train_resampled[test_index]
+    y_train, y_test = y_train_resampled[train_index], y_train_resampled[test_index]
 
-rekomendasi_tanaman = get_rekomendasi_tanaman(cosine_similarities_tanaman, df_tanaman, suhu_pengguna, luas_lahan_pengguna, ph_pengguna, kelembapan_pengguna, penyinaran_pengguna)
-print(f"Rekomendasi tanaman untuk suhu {suhu_pengguna}, luas lahan {luas_lahan_pengguna}, PH {ph_pengguna}, kelembapan udara {kelembapan_pengguna}, dan jumlah penyinaran {penyinaran_pengguna}: {rekomendasi_tanaman}")
+    # Fit model
+    model_tanaman.fit(X_train, y_train, epochs=1000, validation_data=(X_test, y_test), callbacks=[MyCallback()])
 
-# Plot grafik loss dan akurasi
-plt.plot(history.history['loss'], label='train_loss')
-plt.plot(history.history['val_loss'], label='val_loss')
-plt.legend()
-plt.show()
-
-plt.plot(history.history['accuracy'], label='train_accuracy')
-plt.plot(history.history['val_accuracy'], label='val_accuracy')
-plt.legend()
-plt.show()
+# Save the model
+model_tanaman.save('model90.h5')
